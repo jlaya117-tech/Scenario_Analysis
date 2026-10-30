@@ -1,0 +1,297 @@
+---
+title: 'Regression Analysis: Fixed Income (US 10-yr Yield) with 2 Predictors'
+author: "Asset Allocation, Investments"
+date: "`r Sys.Date()`"
+knit: (function(input, ...) {
+  rmarkdown::render(
+  input,
+  output_format = "pdf_document",
+  output_dir = "C:/Users/jlaya/OneDrive - Equip Super/Investments - Short Term Scenario Analysis/00. Models/FI" )
+  })
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+<!-- ## R Markdown -->
+<!-- This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>. -->
+<!-- When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this: -->
+
+<!-- ```{r cars} -->
+<!-- summary(cars) -->
+<!-- ``` -->
+
+<!-- ## Including Plots -->
+<!-- You can also embed plots, for example: -->
+<!-- Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot. -->
+
+<!-- ```{r pressure, echo=FALSE} -->
+<!-- plot(pressure) -->
+<!-- ``` -->
+
+## Purpose of model
+The purpose of this model is to understand the drivers of the expected US 10-year Treasury Yield.
+
+This model is specified as:
+$$
+\begin{aligned}
+US\,10\,Year\,Treasury\,Yield\ = \beta_0 + \beta_1 \text{Term Premium} + \beta_2 \text{Fed Funds Rate 1 year forward} + \epsilon_i
+\end{aligned}
+$$
+```{r, echo=FALSE, warning = FALSE, message = FALSE}
+## Load libraries
+library(readxl)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(broom)
+library(ggfortify)
+library(GGally)
+library(leaps)
+library(lmtest)
+library(sandwich)
+library(marginaleffects)
+library(readr)
+library(this.path)
+library(glmnet)
+
+## Import data
+Data_FI <- read_excel("../Data/FI.xlsx")
+
+## Import test data
+Data_FI_Test <- read_excel("../Data/FI_Test.xlsx")
+
+```
+
+## Variable selection
+
+```{r, echo=FALSE}
+
+Data_FI_sub <- Data_FI[,2:ncol(Data_FI)]
+reg_summary  <- summary(regsubsets(USGG10YR_Index ~ ., data = Data_FI_sub))
+print(reg_summary$outmat)
+
+```
+
+## Exploratory Lasso regression to support the number of variables selected
+
+Lasso (Least Absolute Shrinkage and Selection Operator) regression is a regularisation technique that improves model accuracy and interpretability by penalizing regression coefficients, forcing some to exactly zero.  Lasso is used here only to support variable selection.  Variable selection is still primarily based on theory and OLS (Ordinary Least Squares) is used for prediction and inference.
+
+```{r, echo=FALSE}
+
+X_preds <- as.matrix(Data_FI[,2:(ncol(Data_FI)-1)])
+Y_response <- Data_FI$USGG10YR_Index
+
+## Use cross-validation to find the optimal value of lambda using cv.glmnet()
+set.seed(1)   # For reproducibility
+cv.out <- cv.glmnet(X_preds, Y_response, alpha = 1)
+plot(cv.out, sign.lambda = 1)
+
+## choose lambda.1se because it results with less predictors
+# opt_lambda <- cv.out$lambda.min
+opt_lambda <- cv.out$lambda.1se
+cat("Penalty (Lambda 1se): ", opt_lambda, "\n")
+
+## Fit the LASSO model using glmnet() and print coefficients for the optimal penalty
+FI.lasso <- glmnet(X_preds, Y_response, alpha = 1)
+cat("\n")
+coef(FI.lasso, s = opt_lambda)
+
+```
+
+## Fit the model - 2 best variables
+
+```{r, echo=FALSE}
+
+## Fit the model
+FI.lm <- lm(USGG10YR_Index ~ Term_Premium_ACMTP10 + FFR_1yr_FWD_ECCBUS, data = Data_FI)
+summary(FI.lm)
+cat("AIC: ", AIC(FI.lm), "\n")
+cat("BIC: ", BIC(FI.lm), "\n")
+
+
+```
+
+## Prediction using the latest data
+
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+
+pred.new.data <- Data_FI_Test
+
+cat("Confidence Interval:", "\n")
+predict_norm <- predict(FI.lm, newdata = pred.new.data, interval = "confidence")
+colnames(predict_norm) <- c("Fit", "Lower", "Upper")
+print(predict_norm)
+
+cat("\n")
+cat("Using latest data: ", as.character(pred.new.data$Date), "\n")
+print(as.data.frame(pred.new.data[, c(5, 6, 7)]))
+
+```
+
+## Correcting for Autocorrelation and Heteroscedasticity
+
+To correct for autocorrelation, use Heteroskedasticity and Autocorrelation Consistent (HAC) standard errors, which adjust statistical inference (like t-stats and p-values) without changing the OLS coefficients themselves.
+
+The most common HAC estimator is the Newey-West estimator. It accounts for both the clustering of errors over time (autocorrelation) and unequal variance (heteroscedasticity).
+
+```{r, echo=FALSE}
+hac_FI.lm <- coeftest(FI.lm, vcov = NeweyWest(FI.lm))
+
+print(hac_FI.lm)
+
+HAC_preds <- predictions(FI.lm, vcov = NeweyWest, newdata = pred.new.data)
+predict_HAC_preds <- HAC_preds[, c("estimate", "conf.low", "conf.high")]
+colnames(predict_HAC_preds) <- c("HAC_Estimate", "HAC_Lower", "HAC_Upper")
+
+print(data.frame(predict_HAC_preds))
+
+```
+
+## Check for Autocorrelation
+
+The Durbin-Watson test checks for first-order autocorrelation in the residuals of the model (which is especially important for time-series data).
+
+* Null Hypothesis (H0): Residuals are uncorrelated (autocorrelation = 0).
+* Alternative Hypothesis (HA): Autocorrelation exists (can be "greater", "less", or "two-sided").
+
+Interpretation:
+
+* P-value < 0.05: Reject the null hypothesis. There is significant evidence of autocorrelation.
+* P-value > 0.05: Fail to reject the null hypothesis. The assumption of no autocorrelation holds.
+
+In the dwtest() function from the lmtest package, you can specify the direction using the alternative argument:
+
+* Two-sided: dwtest(model, alternative = "two.sided")
+* Positive only: dwtest(model, alternative = "greater") (the default)
+* Negative only: dwtest(model, alternative = "less")
+
+The test provides a DW statistic (usually denoted as d) and a p-value.
+DW Statistic (d): Ranges from 0 to 4.
+
+* d approx 2: Suggests no autocorrelation.
+* 0 <= d < 2: Indicates positive autocorrelation.
+* 2 < d <= 4: Indicates negative autocorrelation.
+
+Note: A range of 1.5 to 2.5 is generally considered acceptable for most models.
+
+
+```{r, echo=FALSE}
+dwtest(FI.lm, alternative = "two.sided")
+
+```
+
+## Check for Heteroscedasticity
+
+The Breusch-Pagan test checks if the variance of the errors in the model is constant (homoscedasticity).
+
+* Null Hypothesis (H0): The residuals have constant variance (homoscedasticity).
+* Alternative Hypothesis (HA): The residuals do not have constant variance (heteroscedasticity).
+
+Interpretation:
+
+* P-value < 0.05: Reject the null hypothesis. There is significant evidence of heteroskedasticity.
+* P-value > 0.05: Fail to reject the null hypothesis. The assumption of homoscedasticity holds.
+
+```{r, echo=FALSE}
+bptest(FI.lm)
+
+```
+
+## Check for Multicollinearity between Predictors (X)
+
+```{r, echo=FALSE}
+Data_FI_InScope <- Data_FI[c("Term_Premium_ACMTP10", "FFR_1yr_FWD_ECCBUS")]
+ggpairs(data = Data_FI_InScope, progress = FALSE)
+
+```
+
+## Data exploration: Check for linear relationship between Response (Y) and Predictors (X)
+
+```{r, echo=FALSE}
+# Scatterplot to check for linear relationships
+#sp1 <- ggplot(data = Data_FI, aes(x = Growth_ECGQUS, y = USGG10YR_Index)) + geom_point()
+#sp2 <- ggplot(data = Data_FI, aes(x = PCE_ECPCUS, y = USGG10YR_Index)) + geom_point()
+#sp3 <- ggplot(data = Data_FI, aes(x = Unemployment_ECUPUS, y = USGG10YR_Index)) + geom_point()
+sp4 <- ggplot(data = Data_FI, aes(x = Term_Premium_ACMTP10, y = USGG10YR_Index)) + geom_point()
+sp5 <- ggplot(data = Data_FI, aes(x = FFR_1yr_FWD_ECCBUS, y = USGG10YR_Index)) + geom_point()
+#sp1 + sp2 + sp3 + sp4 + sp5 + plot_layout(ncol = 3, nrow = 2)
+sp4 + sp5 + plot_layout(ncol = 3, nrow = 2)
+
+```
+
+## Diagnostic Plots
+
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+
+autoplot(FI.lm, which = 1:2, ncol = 2, label.size = 3)
+autoplot(FI.lm, which = 5:6, ncol = 2, label.size = 3)
+
+lm.data <- augment(FI.lm)
+ggplot(lm.data, aes(x = .fitted, y = .std.resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 2, linetype = "dashed") +
+  geom_hline(yintercept = -2, linetype = "dashed")
+  
+
+```
+
+## Data exploration: Assess distribution of data
+
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+# box plot to check for outliers
+bp1 <- ggplot(data = Data_FI, aes(USGG10YR_Index)) + geom_boxplot()
+#bp2 <- ggplot(data = Data_FI, aes(Growth_ECGQUS)) + geom_boxplot()
+#bp3 <- ggplot(data = Data_FI, aes(PCE_ECPCUS)) + geom_boxplot()
+#bp4 <- ggplot(data = Data_FI, aes(Unemployment_ECUPUS)) + geom_boxplot()
+bp5 <- ggplot(data = Data_FI, aes(Term_Premium_ACMTP10)) + geom_boxplot()
+bp6 <- ggplot(data = Data_FI, aes(FFR_1yr_FWD_ECCBUS)) + geom_boxplot()
+#bp1 + bp2 + bp3 + bp4 + bp5 + bp6 + plot_layout(ncol = 2, nrow = 3)
+bp1 + bp5 + bp6 + plot_layout(ncol = 2, nrow = 3)
+
+# histogram to check for outliers
+
+h1 <- ggplot(data = Data_FI, aes(USGG10YR_Index)) + geom_histogram()
+#h2 <- ggplot(data = Data_FI, aes(Growth_ECGQUS)) + geom_histogram()
+#h3 <- ggplot(data = Data_FI, aes(PCE_ECPCUS)) + geom_histogram()
+#h4 <- ggplot(data = Data_FI, aes(Unemployment_ECUPUS)) + geom_histogram()
+h5 <- ggplot(data = Data_FI, aes(Term_Premium_ACMTP10)) + geom_histogram()
+h6 <- ggplot(data = Data_FI, aes(FFR_1yr_FWD_ECCBUS)) + geom_histogram()
+#h1 + h2 + h3 + h4 + h5 + h6 + plot_layout(ncol = 2, nrow = 3)
+h1 + h5 + h6 + plot_layout(ncol = 2, nrow = 3)
+
+```
+
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+
+#get model statistics
+model_stats <- tidy(FI.lm)
+model_stats_global <- glance(FI.lm)
+
+model_predictions <- as.data.frame(cbind(predict_HAC_preds, predict_norm))
+model_predictions$Pred_latest_data <- as.Date(pred.new.data$Date)
+
+# write key information to .csv
+out_dir <- "C:/Users/jlaya/OneDrive - Equip Super/Investments - Short Term Scenario Analysis/00. Models/FI"
+
+current_file <- basename(this.path::this.path())
+
+file_base_1 <- sub("\\.Rmd$", "_model_stats.csv", current_file)
+final_path_1 <- file.path(out_dir, file_base_1)
+readr::write_csv(model_stats, final_path_1)
+
+file_base_2 <- sub("\\.Rmd$", "_model_stats_global.csv", current_file)
+final_path_2 <- file.path(out_dir, file_base_2)
+readr::write_csv(model_stats_global, final_path_2)
+
+file_base_3 <- sub("\\.Rmd$", "_model_predictions.csv", current_file)
+final_path_3 <- file.path(out_dir, file_base_3)
+readr::write_csv(model_predictions, final_path_3)
+
+```
+
+

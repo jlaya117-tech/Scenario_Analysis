@@ -1,0 +1,126 @@
+---
+title: 'Regression Analysis: Cash Return with 4 Predictors and log(Y)'
+author: "Asset Allocation, Investments"
+date: "`r Sys.Date()`"
+knit: (function(input, ...) {
+  rmarkdown::render(
+  input,
+  output_format = "pdf_document",
+  output_dir = "C:/Users/jlaya/OneDrive - Equip Super/Investments - Short Term Scenario Analysis/00. Models" )
+  })
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+<!-- ## R Markdown -->
+<!-- This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>. -->
+<!-- When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this: -->
+
+<!-- ```{r cars} -->
+<!-- summary(cars) -->
+<!-- ``` -->
+
+<!-- ## Including Plots -->
+<!-- You can also embed plots, for example: -->
+<!-- Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot. -->
+
+<!-- ```{r pressure, echo=FALSE} -->
+<!-- plot(pressure) -->
+<!-- ``` -->
+
+## Purpose of model
+The purpose of this model is to understand the drivers of the expected 1-year forward returns of the cash asset class.
+
+This model is specified as:
+$$
+log(Fed\,Funds\,Rate\,1\,year\,forward) = \beta_0 + \beta_1 \text{Growth} + \beta_2 \text{PCE Inflation} + \beta_3 \text{Unemployment} + \beta_4 \text{Current Fed Funds Rate} + \epsilon_i
+$$
+```{r, echo=FALSE, warning = FALSE, message = FALSE}
+## Load libraries
+library(readxl)
+library(ggplot2)
+library(patchwork)
+library(ggplot2)
+
+## Import data
+Data_Cash <- read_excel("../Data/Cash.xlsx")
+
+```
+
+## Fit the model
+
+```{r, echo=FALSE}
+## Fit the model
+Cash.lm <- lm(log(FFR_1yr_FWD_ECCBUS) ~ Growth_ECGQUS + PCE_ECPCUS + Unemployment_ECUPUS + Current_Fed_Funds_FDTRMID_Index,
+              data = Data_Cash)
+summary(Cash.lm)
+cat("AIC: ", AIC(Cash.lm), "\n")
+cat("BIC: ", BIC(Cash.lm), "\n")
+
+```
+
+## Data exploration: Check for linear relationship between Response (Y) and Predictors (X)
+
+```{r, echo=FALSE}
+# Scatterplot to check for linear relationships
+sp1 <- ggplot(data = Data_Cash, aes(x = Growth_ECGQUS, y = FFR_1yr_FWD_ECCBUS)) + geom_point()
+sp2 <- ggplot(data = Data_Cash, aes(x = PCE_ECPCUS, y = FFR_1yr_FWD_ECCBUS)) + geom_point()
+sp3 <- ggplot(data = Data_Cash, aes(x = Unemployment_ECUPUS, y = FFR_1yr_FWD_ECCBUS)) + geom_point()
+sp4 <- ggplot(data = Data_Cash, aes(x = Current_Fed_Funds_FDTRMID_Index, y = FFR_1yr_FWD_ECCBUS)) + geom_point()
+sp1 + sp2 + sp3 + sp4 + plot_layout(ncol = 2, nrow = 2)
+
+```
+
+## Diagnostic Plots
+
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+
+library(ggfortify)
+#autoplot(Cash.lm, which = 1:6, ncol = 3, label.size = 3)
+# autoplot(Cash.lm, which = 1, ncol = 1, label.size = 3)
+# autoplot(Cash.lm, which = 2, ncol = 1, label.size = 3)
+# autoplot(Cash.lm, which = 5, ncol = 1, label.size = 3)
+# autoplot(Cash.lm, which = 6, ncol = 1, label.size = 3)
+
+autoplot(Cash.lm, which = 1:2, ncol = 2, label.size = 3)
+autoplot(Cash.lm, which = 5:6, ncol = 2, label.size = 3)
+
+library(broom)
+lm.data <- augment(Cash.lm)
+ggplot(lm.data, aes(x = .fitted, y = .std.resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 2, linetype = "dashed") +
+  geom_hline(yintercept = -2, linetype = "dashed")
+  
+
+```
+
+## Data exploration: Assess distribution of data
+
+```{r , echo=FALSE, warning = FALSE, message = FALSE}
+# box plot to check for outliers
+bp1 <- ggplot(data = Data_Cash, aes(FFR_1yr_FWD_ECCBUS)) + geom_boxplot()
+bp2 <- ggplot(data = Data_Cash, aes(Growth_ECGQUS)) + geom_boxplot()
+bp3 <- ggplot(data = Data_Cash, aes(PCE_ECPCUS)) + geom_boxplot()
+bp4 <- ggplot(data = Data_Cash, aes(Unemployment_ECUPUS)) + geom_boxplot()
+bp5 <- ggplot(data = Data_Cash, aes(Current_Fed_Funds_FDTRMID_Index)) + geom_boxplot()
+bp1 + bp2 + bp3 + bp4 + bp5 +plot_layout(ncol = 2, nrow = 3)
+
+# histogram to check for outliers
+
+h1 <- ggplot(data = Data_Cash, aes(FFR_1yr_FWD_ECCBUS)) + geom_histogram()
+h2 <- ggplot(data = Data_Cash, aes(Growth_ECGQUS)) + geom_histogram()
+h3 <- ggplot(data = Data_Cash, aes(PCE_ECPCUS)) + geom_histogram()
+h4 <- ggplot(data = Data_Cash, aes(Unemployment_ECUPUS)) + geom_histogram()
+h5 <- ggplot(data = Data_Cash, aes(Current_Fed_Funds_FDTRMID_Index)) + geom_histogram()
+h1 + h2 + h3 + h4 + h5 +plot_layout(ncol = 2, nrow = 3)
+
+```
+
+
+
